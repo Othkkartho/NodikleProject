@@ -1,0 +1,32 @@
+[package]
+name = "nodikle-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "nodikle_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+chrono.workspace = true
+nodikle-core.workspace = true
+nodikle-index.workspace = true
+nodikle-model.workspace = true
+nodikle-storage.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tauri.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+notify.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

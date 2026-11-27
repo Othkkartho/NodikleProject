@@ -1,0 +1,223 @@
+name: Release
+
+on:
+  push:
+    branches: [ master ]
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Check Workspace Version Change
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      should_release: ${{ steps.meta.outputs.should_release }}
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+
+      - name: Compare workspace version with previous master commit
+        id: meta
+        shell: bash
+        run: |
+          VERSION=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          if [ -z "$VERSION" ]; then
+            echo "Failed to read [workspace.package].version from Cargo.toml"
+            exit 1
+          fi
+
+          PREV_VERSION=""
+          if git cat-file -e HEAD~1:Cargo.toml 2>/dev/null; then
+            PREV_VERSION=$(git show HEAD~1:Cargo.toml | sed -n '/^\[workspace\.package\]/,/^\[/s/^version[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' | head -n 1)
+          fi
+
+          TAG="v${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Current version: ${VERSION}, Previous version: ${PREV_VERSION:-<none>}"
+
+          if [ "$VERSION" = "$PREV_VERSION" ]; then
+            echo "Workspace version did not change on master; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+            echo "Tag ${TAG} already exists on origin; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Version changed (${PREV_VERSION:-<none>} -> ${VERSION}) and tag ${TAG} is new; starting release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-assets:
+    name: Build Release Archive (${{ matrix.target_name }})
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target_name: windows-x86_64
+          - os: macos-latest
+            target_name: macos-arm64
+          - os: ubuntu-24.04
+            target_name: linux-x86_64
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install Linux Tauri dependencies
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft*
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config libssl-dev libgtk-3-dev libxdo-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf libsecret-1-dev
+
+      - name: Generate desktop icons
+        run: node scripts/generate-icons.mjs
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build
+
+      - name: Build release binary
+        run: cargo build --release -p nodikle-app
+
+      - name: Package Windows zip archive
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET: ${{ matrix.target_name }}
+        run: |
+          $pkg = "nodikle-v$($env:VERSION)-$($env:TARGET)"
+          $stage = "staging/$pkg"
+          New-Item -ItemType Directory -Force -Path $stage, "artifacts" | Out-Null
+          Copy-Item "target/release/nodikle-app.exe" "$stage/nodikle.exe"
+          Copy-Item "README.md", "LICENSE" "$stage/"
+          Compress-Archive -Path $stage -DestinationPath "artifacts/$pkg.zip" -Force
+
+      - name: Package macOS .app bundle tar.gz and zip
+        if: matrix.os == 'macos-latest'
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET: ${{ matrix.target_name }}
+        run: |
+          PKG="nodikle-v${VERSION}-${TARGET}"
+          STAGE="staging/${PKG}"
+          APP="${STAGE}/Nodikle.app"
+          mkdir -p "${APP}/Contents/MacOS" "${APP}/Contents/Resources" artifacts
+          cp target/release/nodikle-app "${APP}/Contents/MacOS/nodikle-app"
+          chmod +x "${APP}/Contents/MacOS/nodikle-app"
+          cp apps/app/src-tauri/icons/icon.png "${APP}/Contents/Resources/icon.png"
+          cat > "${APP}/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Nodikle</string>
+            <key>CFBundleDisplayName</key><string>Nodikle</string>
+            <key>CFBundleIdentifier</key><string>dev.nodikle.app</string>
+            <key>CFBundleVersion</key><string>${VERSION}</string>
+            <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+            <key>CFBundleExecutable</key><string>nodikle-app</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          cp README.md LICENSE "${STAGE}/"
+          tar -czf "artifacts/${PKG}.tar.gz" -C staging "${PKG}"
+          (cd staging && zip -r -y "../artifacts/${PKG}.zip" "${PKG}")
+
+      - name: Package Linux tar.gz archive
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET: ${{ matrix.target_name }}
+        run: |
+          PKG="nodikle-v${VERSION}-${TARGET}"
+          STAGE="staging/${PKG}"
+          mkdir -p "${STAGE}" artifacts
+          cp target/release/nodikle-app "${STAGE}/nodikle"
+          chmod +x "${STAGE}/nodikle"
+          cp README.md LICENSE "${STAGE}/"
+          tar -czf "artifacts/${PKG}.tar.gz" -C staging "${PKG}"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target_name }}
+          path: artifacts/*
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [ prepare, build-assets ]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Build release notes from CHANGELOG.md
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const version = process.env.VERSION;
+            const tag = process.env.TAG;
+            const changelog = fs.readFileSync("CHANGELOG.md", "utf8");
+            const escaped = version.replace(/\./g, "\\.");
+            const re = new RegExp(`## \\[${escaped}\\][^\\n]*\\n([\\s\\S]*?)(?=\\n## \\[|$)`);
+            const m = changelog.match(re);
+            const section = m ? m[1].trim() : `Nodikle ${tag} release.`;
+            const usage = [
+              "",
+              "---",
+              "",
+              "## 실행 방법",
+              "- **Windows (`x86_64`)**: `nodikle-" + tag + "-windows-x86_64.zip` 압축 해제 후 `nodikle.exe` 실행",
+              "- **macOS (`arm64`)**: `nodikle-" + tag + "-macos-arm64.tar.gz` 또는 `.zip` 압축 해제 후 `Nodikle.app` 실행",
+              "- **Linux (`x86_64`)**: `nodikle-" + tag + "-linux-x86_64.tar.gz` 압축 해제 후 `./nodikle` 실행 (`libwebkit2gtk-4.1` 필요)"
+            ].join("\n");
+            fs.writeFileSync("release-notes.md", section + "\n" + usage + "\n");
+          '
+          ls -lh release-assets/
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: Nodikle ${{ needs.prepare.outputs.tag }}
+          body_path: release-notes.md
+          files: release-assets/*
+          make_latest: true

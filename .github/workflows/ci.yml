@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  frontend:
+    name: Frontend Typecheck, Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: npm install
+      - run: npm run build
+      - run: npm test
+
+  rust:
+    name: Rust Workspace Lint, Test & Check (${{ matrix.os }})
+    needs: frontend
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Install Linux Tauri dependencies
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft*
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config libssl-dev libgtk-3-dev libxdo-dev \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            patchelf libsecret-1-dev
+      - name: Generate desktop icons
+        run: node scripts/generate-icons.mjs
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+      - name: Build frontend assets for Tauri context
+        working-directory: frontend
+        run: npm run build
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run Clippy lints
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Run workspace unit & integration tests
+        run: cargo test --workspace
+      - name: Check entire workspace
+        run: cargo check --workspace

@@ -8,15 +8,15 @@ Nodikle는 **플랫폼 독립 Rust 코어 엔진을 단위 테스트로 먼저 �
 
 ```mermaid
 flowchart LR
-    P0["Phase 0: 아키텍처 및 상세 설계 (현재)"] --> P1["Phase 1: Rust 코어 & 로컬 인덱스"]
-    P1 --> P2["Phase 2: Desktop + Android MVP UI"]
-    P2 --> P3["Phase 3: Google Drive 동기화 & Android SAF"]
+    P0["Phase 0: 아키텍처 및 상세 설계 (완료)"] --> P1["Phase 1: Rust 코어 & 로컬 인덱스 (완료)"]
+    P1 --> P2["Phase 2: Desktop + Android MVP UI (완료)"]
+    P2 --> P3["Phase 3: Google Drive 동기화 & Android SAF (다음 단계)"]
     P3 --> P4["Phase 4: iOS 및 추가 클라우드 확장"]
 ```
 
 ---
 
-## Phase 0. 아키텍처 및 상세 설계 (현재)
+## Phase 0. 아키텍처 및 상세 설계 (완료)
 - **목표:** 프로젝트 방향성, 크로스플랫폼 UI 전략, 하이브리드 데이터 모델, Trait 기반 저장소/동기화 아키텍처 확정.
 - **산출물:**
   - `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `.gitignore`, Issue/PR 템플릿
@@ -27,7 +27,7 @@ flowchart LR
 
 ---
 
-## Phase 1. 플랫폼 독립 Rust 코어 & SQLite 인덱스 엔진
+## Phase 1. 플랫폼 독립 Rust 코어 & SQLite 인덱스 엔진 (완료)
 - **목표:** UI 없이도 동작하며 자동화된 테스트로 완전히 검증되는 코어 라이브러리 구축.
 - **구현 대상 크레이트:** `nodikle-model`, `nodikle-core`, `nodikle-index`, `nodikle-storage` (Desktop 어댑터 포함).
 - **세부 작업:**
@@ -42,7 +42,7 @@ flowchart LR
 
 ---
 
-## Phase 2. Desktop + Android MVP 애플리케이션
+## Phase 2. Desktop + Android MVP 애플리케이션 (완료)
 - **목표:** Tauri v2 단일 UI 코드베이스로 Desktop과 Android에서 로컬 Vault를 생성하고 노트·가계부·여행 플래너를 실사용할 수 있는 MVP 완성.
 - **구현 대상:** `apps/app` (Tauri v2 호스트), `frontend/` (React + TypeScript + TipTap + CodeMirror 6).
 - **세부 작업:**

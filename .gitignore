@@ -13,6 +13,7 @@ frontend/.vite/
 # Tauri & Mobile Build Artifacts
 apps/*/src-tauri/target/
 apps/*/src-tauri/gen/schemas/
+apps/*/src-tauri/icons/
 apps/*/src-tauri/gen/android/app/build/
 apps/*/src-tauri/gen/android/.gradle/
 apps/*/src-tauri/gen/android/local.properties
